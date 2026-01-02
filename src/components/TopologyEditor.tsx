@@ -23,7 +23,7 @@ import dagre from '@dagrejs/dagre';
 import { Sidebar } from './Sidebar';
 import { RouterNode, SwitchNode, DeviceNode, ModemNode, WifiNode, GatewayNode, SmartHomeNode, CameraNode } from './CustomNodes';
 import { FlowEdge } from './FlowEdge';
-import { Download, Upload, Save, Trash2, LayoutTemplate, FileSpreadsheet } from 'lucide-react';
+import { Download, Upload, Save, Trash2, LayoutTemplate, FileSpreadsheet, Map as MapIcon, Network as NetworkIcon, Image as ImageIcon, RotateCcw } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 const nodeTypes: NodeTypes = {
@@ -84,6 +84,16 @@ const defaultEdgeOptions = {
 };
 
 const STORAGE_KEY = 'network-topology-data';
+const FLOOR_PLAN_IMAGE_KEY = 'network-floor-plan-image';
+
+// --- Utility Functions ---
+const getIPPrefix = (ip: string) => ip.split('.').slice(0, 3).join('.');
+
+const calculateIP = (subnet: string, suffix: string) => {
+  if (!subnet) return '';
+  const prefix = subnet.split('.').slice(0, 3).join('.');
+  return suffix ? `${prefix}.${suffix}` : `${prefix}.`;
+};
 
 const TopologyEditorContent = () => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
@@ -91,12 +101,118 @@ const TopologyEditorContent = () => {
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [viewMode, setViewMode] = useState<'topology' | 'floorplan'>('topology');
+  const [floorPlanImage, setFloorPlanImage] = useState<string | null>(null);
+  const [topologyViewport, setTopologyViewport] = useState({ x: 0, y: 0, zoom: 1 });
+  const [floorPlanViewport, setFloorPlanViewport] = useState({ x: 0, y: 0, zoom: 1 });
+
+  // Filtered nodes for the current view
+  const visibleNodes = nodes.filter(n => 
+    viewMode === 'topology' ? n.data.showInTopology : n.data.showInFloorPlan
+  );
+
+  const { setViewport, getViewport } = useReactFlow();
+
+  const resetViewport = () => {
+    if (reactFlowInstance) {
+      reactFlowInstance.fitView({ duration: 800 });
+    }
+  };
+
+  const handleViewModeChange = (mode: 'topology' | 'floorplan') => {
+    if (mode === viewMode) return;
+    
+    // Save current viewport
+    const currentViewport = getViewport();
+    if (viewMode === 'topology') {
+      setTopologyViewport(currentViewport);
+    } else {
+      setFloorPlanViewport(currentViewport);
+    }
+    
+    // Switch mode
+    setViewMode(mode);
+    
+    // Restore target viewport
+    const targetViewport = mode === 'topology' ? topologyViewport : floorPlanViewport;
+    // Small delay to ensure React Flow has updated nodes before applying viewport
+    setTimeout(() => {
+      setViewport(targetViewport, { duration: 400 });
+    }, 50);
+  };
 
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
 
+  const updateInheritance = useCallback((nodesToUpdate: Node[], currentEdges: Edge[]) => {
+    const nodesMap = new Map(nodesToUpdate.map(n => [n.id, n]));
+    const visited = new Set<string>();
+
+    const processNode = (nodeId: string) => {
+      if (visited.has(nodeId)) return;
+      visited.add(nodeId);
+
+      const node = nodesMap.get(nodeId);
+      if (!node) return;
+
+      const parentEdge = currentEdges.find(e => e.target === nodeId);
+      if (parentEdge) {
+        const parentNode = nodesMap.get(parentEdge.source);
+        if (parentNode && parentNode.data.ip) {
+          const parentPrefix = getIPPrefix(parentNode.data.ip);
+          const isRouterDial = node.type === 'routerNode' && node.data.mode === 'dial';
+          
+          if (!isRouterDial) {
+            const suffix = node.data.ipSuffix || '';
+            const newIp = calculateIP(`${parentPrefix}.0`, suffix);
+            
+            const newNode = {
+              ...node,
+              data: {
+                ...node.data,
+                ip: newIp,
+                ipSuffix: suffix,
+                inheritedSubnet: `${parentPrefix}.0/24`
+              }
+            };
+            nodesMap.set(nodeId, newNode);
+          }
+        }
+      }
+      
+      // Process children
+      currentEdges
+        .filter(e => e.source === nodeId)
+        .forEach(e => processNode(e.target));
+    };
+
+    // Start from roots (nodes without parents or router dial nodes)
+    nodesToUpdate.forEach(node => {
+      const hasParent = currentEdges.some(e => e.target === node.id);
+      const isRouterDial = node.type === 'routerNode' && node.data.mode === 'dial';
+      const isModem = node.type === 'modemNode';
+      
+      if (!hasParent || isRouterDial || isModem) {
+        processNode(node.id);
+      }
+    });
+
+    return Array.from(nodesMap.values());
+  }, []);
+
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge({ ...params, type: 'flowEdge' }, eds)),
-    [setEdges],
+    (params: Connection) => {
+      if (viewMode === 'floorplan') return;
+      
+      setEdges((eds) => {
+        const newEdges = addEdge({ ...params, type: 'flowEdge' }, eds);
+        
+        // Trigger inheritance update after connection
+        setNodes((nds) => updateInheritance(nds, newEdges));
+        
+        return newEdges;
+      });
+    },
+    [setEdges, setNodes, viewMode, updateInheritance],
   );
 
   const onEdgeClick = useCallback((event: React.MouseEvent, edge: Edge) => {
@@ -134,14 +250,64 @@ const TopologyEditorContent = () => {
           ip: '', 
           ipSuffix: '1', // Default suffix to 1
           type: 'laptop',
-          mode: 'dial' // Default router mode to dial
+          mode: 'dial', // Default router mode to dial
+          viewMode: viewMode, // Sync current view mode
+          topologyPos: position,
+          floorPlanPos: position,
+          // Track visibility in each mode
+          showInTopology: viewMode === 'topology',
+          showInFloorPlan: viewMode === 'floorplan'
         },
       };
 
       setNodes((nds) => nds.concat(newNode));
     },
-    [reactFlowInstance, setNodes],
+    [reactFlowInstance, setNodes, viewMode],
   );
+
+  const onNodeDragStop = useCallback(
+    (_: any, node: Node) => {
+      setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id === node.id) {
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                [viewMode === 'topology' ? 'topologyPos' : 'floorPlanPos']: node.position,
+              },
+            };
+          }
+          return n;
+        })
+      );
+    },
+    [viewMode, setNodes]
+  );
+
+  // Sync viewMode to all nodes and SWAP positions when it changes
+  useEffect(() => {
+    setNodes((nds) => 
+      nds.map((node) => {
+        const topologyPos = node.data.topologyPos as { x: number, y: number } || node.position;
+        const floorPlanPos = node.data.floorPlanPos as { x: number, y: number } || node.position;
+        
+        const targetPos = viewMode === 'topology' ? topologyPos : floorPlanPos;
+        
+        return {
+          ...node,
+          position: targetPos,
+          data: { 
+            ...node.data, 
+            viewMode,
+            // Ensure both are initialized if they weren't
+            topologyPos,
+            floorPlanPos
+          }
+        };
+      })
+    );
+  }, [viewMode, setNodes]);
 
   const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
     setSelectedNode(node);
@@ -156,71 +322,30 @@ const TopologyEditorContent = () => {
   const updateNodeData = (key: string, value: any) => {
     if (!selectedNode) return;
     
-    // 1. First calculate the NEW data for the selected node immediately
-    const updatedData = { ...selectedNode.data, [key]: value };
-    
-    // Calculate IP for the selected node if subnet or suffix changed
-    if (key === 'subnet' || key === 'mode' || key === 'ipSuffix') {
-      // Allow empty suffix during typing
-      const suffix = updatedData.ipSuffix || '';
-      updatedData.ipSuffix = suffix;
-      
-      if (updatedData.subnet) {
-        const prefix = updatedData.subnet.split('.').slice(0, 3).join('.');
-        updatedData.ip = suffix ? `${prefix}.${suffix}` : `${prefix}.`;
-      } else if (key === 'mode' && value === 'inherit') {
-        updatedData.subnet = '';
-      }
-    }
-
-    // 2. Update the global nodes state
     setNodes((nds) => {
-      // Create a map of updated nodes to calculate inheritance correctly
-      const nodesMap = new Map(nds.map(n => [n.id, n.id === selectedNode.id ? { ...n, data: updatedData } : n]));
-      
-      const processInheritance = (nodeId: string, visited = new Set()) => {
-        if (visited.has(nodeId)) return;
-        visited.add(nodeId);
-
-        const node = nodesMap.get(nodeId)!;
-        const parentEdge = edges.find(e => e.target === nodeId);
-        
-        if (parentEdge) {
-          const parentNode = nodesMap.get(parentEdge.source);
-          if (parentNode && parentNode.data.ip) {
-            const parentPrefix = parentNode.data.ip.split('.').slice(0, 3).join('.');
-            const isRouterDial = node.type === 'routerNode' && node.data.mode === 'dial';
+      const updatedNodes = nds.map((n) => {
+        if (n.id === selectedNode.id) {
+          const updatedData = { ...n.data, [key]: value };
+          
+          if (key === 'subnet' || key === 'mode' || key === 'ipSuffix') {
+            const suffix = updatedData.ipSuffix || '';
+            updatedData.ipSuffix = suffix;
             
-            if (!isRouterDial) {
-              const suffix = node.data.ipSuffix || '';
-              const newIp = suffix ? `${parentPrefix}.${suffix}` : `${parentPrefix}.`;
-              const newNode = {
-                ...node,
-                data: {
-                  ...node.data,
-                  ip: newIp,
-                  ipSuffix: suffix,
-                  inheritedSubnet: `${parentPrefix}.0/24`
-                }
-              };
-              nodesMap.set(nodeId, newNode);
-              
-              // If this node changed, its children might need updating too
-              edges.filter(e => e.source === nodeId).forEach(e => processInheritance(e.target, visited));
+            if (updatedData.subnet) {
+              updatedData.ip = calculateIP(updatedData.subnet, suffix);
+            } else if (key === 'mode' && value === 'inherit') {
+              updatedData.subnet = '';
             }
           }
+          return { ...n, data: updatedData };
         }
-      };
+        return n;
+      });
 
-      // Start inheritance update from the changed node and its descendants
-      processInheritance(selectedNode.id);
-      // Also potentially update children if this node's IP changed
-      edges.filter(e => e.source === selectedNode.id).forEach(e => processInheritance(e.target));
-
-      const finalNodes = Array.from(nodesMap.values());
+      const finalNodes = updateInheritance(updatedNodes, edges);
       
-      // 3. Update the selectedNode reference for the property panel
-      const finalSelectedNode = nodesMap.get(selectedNode.id);
+      // Update selectedNode for property panel
+      const finalSelectedNode = finalNodes.find(n => n.id === selectedNode.id);
       if (finalSelectedNode) {
         setSelectedNode(finalSelectedNode);
       }
@@ -245,7 +370,16 @@ const TopologyEditorContent = () => {
         direction
       );
 
-      setNodes([...layoutedNodes]);
+      // Important: After layout, we need to update the saved topologyPos in data
+      const finalNodes = layoutedNodes.map(node => ({
+        ...node,
+        data: {
+          ...node.data,
+          topologyPos: node.position
+        }
+      }));
+
+      setNodes([...finalNodes]);
       setEdges([...layoutedEdges]);
     },
     [nodes, edges, setNodes, setEdges]
@@ -258,7 +392,29 @@ const TopologyEditorContent = () => {
       setNodes(flow.nodes || []);
       setEdges(flow.edges || []);
     }
+    const savedImage = localStorage.getItem(FLOOR_PLAN_IMAGE_KEY);
+    if (savedImage) {
+      setFloorPlanImage(savedImage);
+    }
   }, [setNodes, setEdges]);
+
+  const handleFloorPlanUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target?.result as string;
+        setFloorPlanImage(result);
+        localStorage.setItem(FLOOR_PLAN_IMAGE_KEY, result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const removeFloorPlan = () => {
+    setFloorPlanImage(null);
+    localStorage.removeItem(FLOOR_PLAN_IMAGE_KEY);
+  };
 
   // Initial load
   useEffect(() => {
@@ -341,8 +497,25 @@ const TopologyEditorContent = () => {
   
   const deleteSelected = () => {
     if (selectedNode) {
-        setNodes((nds) => nds.filter((n) => n.id !== selectedNode.id));
-        setEdges((eds) => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
+        setNodes((nds) => nds.map((n) => {
+          if (n.id === selectedNode.id) {
+            // Instead of full delete, just hide in current mode
+            return {
+              ...n,
+              data: {
+                ...n.data,
+                [viewMode === 'topology' ? 'showInTopology' : 'showInFloorPlan']: false
+              }
+            };
+          }
+          return n;
+        }).filter(n => n.data.showInTopology || n.data.showInFloorPlan)); // Only keep if visible in at least one mode
+        
+        // If hidden in topology, remove its edges
+        if (viewMode === 'topology') {
+          setEdges((eds) => eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id));
+        }
+        
         setSelectedNode(null);
     } else if (selectedEdge) {
         setEdges((eds) => eds.filter((e) => e.id !== selectedEdge.id));
@@ -383,15 +556,53 @@ const TopologyEditorContent = () => {
     <div className="flex h-screen w-full flex-col">
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-6 py-3 flex justify-between items-center shadow-sm z-10">
-        <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-          <span className="text-blue-600">🌐</span> 家庭网络拓扑规划
-        </h1>
+        <div className="flex items-center gap-6">
+          <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2">
+            <span className="text-blue-600">🌐</span> 家庭网络拓扑规划
+          </h1>
+          
+          <div className="flex bg-gray-100 p-1 rounded-lg">
+            <button 
+              onClick={() => handleViewModeChange('topology')}
+              className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-md transition-all ${viewMode === 'topology' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <NetworkIcon size={16} /> 逻辑拓扑
+            </button>
+            <button 
+              onClick={() => handleViewModeChange('floorplan')}
+              className={`flex items-center gap-2 px-4 py-1.5 text-sm font-medium rounded-md transition-all ${viewMode === 'floorplan' ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+            >
+              <MapIcon size={16} /> 户型图模式
+            </button>
+          </div>
+        </div>
+
         <div className="flex gap-3">
+          {viewMode === 'floorplan' && (
+            <div className="flex gap-2 mr-4 pr-4 border-r border-gray-200">
+              {!floorPlanImage ? (
+                <label className="flex items-center gap-2 px-3 py-1.5 text-sm bg-indigo-50 text-indigo-600 rounded-md hover:bg-indigo-100 cursor-pointer">
+                  <ImageIcon size={16} /> 上传户型图
+                  <input type="file" className="hidden" accept="image/*" onChange={handleFloorPlanUpload} />
+                </label>
+              ) : (
+                <button onClick={removeFloorPlan} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-red-50 text-red-600 rounded-md hover:bg-red-100">
+                  更换户型图
+                </button>
+              )}
+            </div>
+          )}
+          
           <button onClick={clearTopology} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-red-50 text-red-600 rounded-md hover:bg-red-100">
             <Trash2 size={16} /> 清空
           </button>
-          <button onClick={() => onLayout('TB')} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100" title="垂直布局">
-            <LayoutTemplate size={16} /> 自动布局
+          {viewMode === 'topology' && (
+            <button onClick={() => onLayout('TB')} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100" title="垂直布局">
+              <LayoutTemplate size={16} /> 自动布局
+            </button>
+          )}
+          <button onClick={resetViewport} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gray-50 text-gray-700 rounded-md hover:bg-gray-100" title="重置视角">
+            <RotateCcw size={16} />
           </button>
           <button onClick={saveToLocalStorage} className="flex items-center gap-2 px-3 py-1.5 text-sm bg-blue-50 text-blue-600 rounded-md hover:bg-blue-100">
             <Save size={16} /> 保存
@@ -415,8 +626,8 @@ const TopologyEditorContent = () => {
         
         <div className="flex-1 h-full relative" ref={reactFlowWrapper}>
           <ReactFlow
-            nodes={nodes}
-            edges={edges}
+            nodes={visibleNodes}
+            edges={viewMode === 'floorplan' ? [] : edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
@@ -426,14 +637,23 @@ const TopologyEditorContent = () => {
             onNodeClick={onNodeClick}
             onEdgeClick={onEdgeClick}
             onPaneClick={onPaneClick}
+            onNodeDragStop={onNodeDragStop}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
             defaultEdgeOptions={defaultEdgeOptions}
             fitView
+            panOnDrag={viewMode !== 'floorplan'}
+            selectionOnDrag={viewMode !== 'floorplan'}
+            style={{
+              backgroundImage: viewMode === 'floorplan' && floorPlanImage ? `url(${floorPlanImage})` : 'none',
+              backgroundSize: 'contain',
+              backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
+            }}
           >
             <Controls />
             <MiniMap />
-            <Background gap={12} size={1} />
+            {viewMode === 'topology' && <Background gap={12} size={1} />}
             
             {selectedEdge && (
               <Panel position="top-right" className="bg-white p-4 rounded-lg shadow-lg border border-gray-200 w-64 m-4">
