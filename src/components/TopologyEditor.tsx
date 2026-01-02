@@ -21,7 +21,7 @@ import '@xyflow/react/dist/style.css';
 import dagre from '@dagrejs/dagre';
 
 import { Sidebar } from './Sidebar';
-import { RouterNode, SwitchNode, DeviceNode, ModemNode, WifiNode, GatewayNode, SmartHomeNode, CameraNode } from './CustomNodes';
+import { RouterNode, SwitchNode, DeviceNode, ModemNode, WifiNode, GatewayNode, SmartHomeNode, CameraNode, NodeData } from './CustomNodes';
 import { FlowEdge } from './FlowEdge';
 import { Download, Upload, Save, Trash2, LayoutTemplate, FileSpreadsheet, Map as MapIcon, Network as NetworkIcon, Image as ImageIcon, RotateCcw } from 'lucide-react';
 import * as XLSX from 'xlsx';
@@ -41,7 +41,7 @@ const edgeTypes: EdgeTypes = {
   flowEdge: FlowEdge,
 };
 
-const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'TB') => {
+const getLayoutedElements = (nodes: Node<NodeData>[], edges: Edge[], direction = 'TB') => {
   const dagreGraph = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
   const isHorizontal = direction === 'LR';
   dagreGraph.setGraph({ rankdir: direction });
@@ -97,10 +97,10 @@ const calculateIP = (subnet: string, suffix: string) => {
 
 const TopologyEditorContent = () => {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node<NodeData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [reactFlowInstance, setReactFlowInstance] = useState<any>(null);
-  const [selectedNode, setSelectedNode] = useState<Node | null>(null);
+  const [selectedNode, setSelectedNode] = useState<Node<NodeData> | null>(null);
   const [viewMode, setViewMode] = useState<'topology' | 'floorplan'>('topology');
   const [floorPlanImage, setFloorPlanImage] = useState<string | null>(null);
   const [topologyViewport, setTopologyViewport] = useState({ x: 0, y: 0, zoom: 1 });
@@ -143,7 +143,7 @@ const TopologyEditorContent = () => {
 
   const [selectedEdge, setSelectedEdge] = useState<Edge | null>(null);
 
-  const updateInheritance = useCallback((nodesToUpdate: Node[], currentEdges: Edge[]) => {
+  const updateInheritance = useCallback((nodesToUpdate: Node<NodeData>[], currentEdges: Edge[]) => {
     const nodesMap = new Map(nodesToUpdate.map(n => [n.id, n]));
     const visited = new Set<string>();
 
@@ -160,12 +160,13 @@ const TopologyEditorContent = () => {
         if (parentNode && parentNode.data.ip) {
           const parentPrefix = getIPPrefix(parentNode.data.ip);
           const isRouterDial = node.type === 'routerNode' && node.data.mode === 'dial';
+          const isModem = node.type === 'modemNode';
           
           if (!isRouterDial) {
             const suffix = node.data.ipSuffix || '';
             const newIp = calculateIP(`${parentPrefix}.0`, suffix);
             
-            const newNode = {
+            const newNode: Node<NodeData> = {
               ...node,
               data: {
                 ...node.data,
@@ -241,7 +242,7 @@ const TopologyEditorContent = () => {
         y: event.clientY,
       });
 
-      const newNode: Node = {
+      const newNode: Node<NodeData> = {
         id: `${type}-${Date.now()}`,
         type,
         position,
@@ -266,7 +267,7 @@ const TopologyEditorContent = () => {
   );
 
   const onNodeDragStop = useCallback(
-    (_: any, node: Node) => {
+    (_: any, node: Node<NodeData>) => {
       setNodes((nds) =>
         nds.map((n) => {
           if (n.id === node.id) {
@@ -309,7 +310,7 @@ const TopologyEditorContent = () => {
     );
   }, [viewMode, setNodes]);
 
-  const onNodeClick = useCallback((event: React.MouseEvent, node: Node) => {
+  const onNodeClick = useCallback((event: React.MouseEvent, node: Node<NodeData>) => {
     setSelectedNode(node);
     setSelectedEdge(null);
   }, []);

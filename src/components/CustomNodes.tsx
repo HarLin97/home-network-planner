@@ -1,6 +1,24 @@
 import React, { memo } from 'react';
-import { Handle, Position, NodeProps } from '@xyflow/react';
+import { Handle, Position, NodeProps, Node } from '@xyflow/react';
 import { Router, Network, Smartphone, Laptop, Tv, Monitor, Cpu, Wifi, Radio, Home, Camera } from 'lucide-react';
+
+export interface NodeData {
+  label: string;
+  ip?: string;
+  ipSuffix?: string;
+  model?: string;
+  area?: string;
+  type?: string;
+  mode?: 'dial' | 'inherit';
+  viewMode?: 'topology' | 'floorplan';
+  topologyPos?: { x: number; y: number };
+  floorPlanPos?: { x: number; y: number };
+  showInTopology?: boolean;
+  showInFloorPlan?: boolean;
+  inheritedSubnet?: string;
+  subnet?: string;
+  [key: string]: any; // Allow for other dynamic properties
+}
 
 // Wrapper for consistent styling
 const NodeWrapper = ({ 
@@ -14,7 +32,7 @@ const NodeWrapper = ({
   selected?: boolean; 
   colorClass: string;
   borderColorClass: string;
-  data: any;
+  data: NodeData;
 }) => {
   const isFloorPlan = data.viewMode === 'floorplan';
 
@@ -26,7 +44,7 @@ const NodeWrapper = ({
         const iconContainer = children.find(child => 
           React.isValidElement(child) && 
           child.type !== Handle && 
-          (child.type === 'div' || child.props.className?.includes('rounded-full'))
+          (child.type === 'div' || (typeof child.props === 'object' && child.props !== null && 'className' in child.props && typeof child.props.className === 'string' && child.props.className.includes('rounded-full')))
         );
         return iconContainer || children.find(c => React.isValidElement(c) && c.type !== Handle) || children[0];
       }
@@ -81,7 +99,7 @@ const NodeWrapper = ({
   );
 };
 
-export const CameraNode = memo(({ data, selected }: NodeProps) => {
+export const CameraNode = memo(({ data, selected }: NodeProps<Node<NodeData>>) => {
   return (
     <NodeWrapper selected={selected} colorClass="text-slate-600" borderColorClass="border-gray-200" data={data}>
       <Handle type="target" position={Position.Top} className="w-4 h-4 bg-slate-400 border-2 border-white" />
@@ -96,7 +114,7 @@ export const CameraNode = memo(({ data, selected }: NodeProps) => {
   );
 });
 
-export const GatewayNode = memo(({ data, selected }: NodeProps) => {
+export const GatewayNode = memo(({ data, selected }: NodeProps<Node<NodeData>>) => {
   return (
     <NodeWrapper selected={selected} colorClass="text-indigo-600" borderColorClass="border-gray-200" data={data}>
       <Handle type="target" position={Position.Top} className="w-4 h-4 bg-indigo-400 border-2 border-white" />
@@ -112,7 +130,7 @@ export const GatewayNode = memo(({ data, selected }: NodeProps) => {
   );
 });
 
-export const SmartHomeNode = memo(({ data, selected }: NodeProps) => {
+export const SmartHomeNode = memo(({ data, selected }: NodeProps<Node<NodeData>>) => {
   return (
     <NodeWrapper selected={selected} colorClass="text-rose-600" borderColorClass="border-gray-200" data={data}>
       <Handle type="target" position={Position.Top} className="w-4 h-4 bg-rose-400 border-2 border-white" />
@@ -127,7 +145,7 @@ export const SmartHomeNode = memo(({ data, selected }: NodeProps) => {
   );
 });
 
-export const ModemNode = memo(({ data, selected }: NodeProps) => {
+export const ModemNode = memo(({ data, selected }: NodeProps<Node<NodeData>>) => {
   return (
     <NodeWrapper selected={selected} colorClass="text-orange-600" borderColorClass="border-gray-200" data={data}>
       <div className="p-2 bg-orange-100 rounded-full">
@@ -142,7 +160,7 @@ export const ModemNode = memo(({ data, selected }: NodeProps) => {
   );
 });
 
-export const WifiNode = memo(({ data, selected }: NodeProps) => {
+export const WifiNode = memo(({ data, selected }: NodeProps<Node<NodeData>>) => {
   return (
     <NodeWrapper selected={selected} colorClass="text-cyan-600" borderColorClass="border-gray-200" data={data}>
       <Handle type="target" position={Position.Top} className="w-4 h-4 bg-cyan-400 border-2 border-white" />
@@ -158,7 +176,7 @@ export const WifiNode = memo(({ data, selected }: NodeProps) => {
   );
 });
 
-export const RouterNode = memo(({ data, selected }: NodeProps) => {
+export const RouterNode = memo(({ data, selected }: NodeProps<Node<NodeData>>) => {
   return (
     <NodeWrapper selected={selected} colorClass="text-blue-600" borderColorClass="border-gray-200" data={data}>
       <Handle type="target" position={Position.Top} className="w-4 h-4 bg-blue-400 border-2 border-white" />
@@ -174,7 +192,7 @@ export const RouterNode = memo(({ data, selected }: NodeProps) => {
   );
 });
 
-export const SwitchNode = memo(({ data, selected }: NodeProps) => {
+export const SwitchNode = memo(({ data, selected }: NodeProps<Node<NodeData>>) => {
   return (
     <NodeWrapper selected={selected} colorClass="text-green-600" borderColorClass="border-gray-200" data={data}>
       <Handle type="target" position={Position.Top} className="w-4 h-4 bg-green-400 border-2 border-white" />
@@ -190,7 +208,7 @@ export const SwitchNode = memo(({ data, selected }: NodeProps) => {
   );
 });
 
-export const DeviceNode = memo(({ data, selected }: NodeProps) => {
+export const DeviceNode = memo(({ data, selected }: NodeProps<Node<NodeData>>) => {
   const getIcon = () => {
     switch (data.type) {
       case 'mobile': return <Smartphone size={20} />;

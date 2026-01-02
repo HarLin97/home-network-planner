@@ -1,0 +1,18 @@
+:80 {
+    # 设置根目录
+    root * /usr/share/nginx/html
+    
+    # 开启压缩
+    encode gzip
+    
+    # 处理前端路由
+    try_files {path} /index.html
+    
+    # 静态文件服务
+    file_server
+    
+    # 日志配置
+    log {
+        output stdout
+    }
+}

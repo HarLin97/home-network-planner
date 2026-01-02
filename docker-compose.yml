@@ -1,0 +1,7 @@
+services:
+  web:
+    build: .
+    container_name: home-network-planner
+    ports:
+      - "8080:80"
+    restart: always
