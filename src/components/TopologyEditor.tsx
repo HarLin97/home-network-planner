@@ -23,7 +23,7 @@ import dagre from '@dagrejs/dagre';
 import { Sidebar } from './Sidebar';
 import { RouterNode, SwitchNode, DeviceNode, ModemNode, WifiNode, GatewayNode, SmartHomeNode, CameraNode, NodeData } from './CustomNodes';
 import { FlowEdge } from './FlowEdge';
-import { Download, Upload, Save, Trash2, LayoutTemplate, FileSpreadsheet, Map as MapIcon, Network as NetworkIcon, Image as ImageIcon, RotateCcw } from 'lucide-react';
+import { Download, Upload, Save, Trash2, LayoutTemplate, FileSpreadsheet, Map as MapIcon, Network as NetworkIcon, Image as ImageIcon, RotateCcw, Github } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 const nodeTypes: NodeTypes = {
@@ -44,10 +44,16 @@ const edgeTypes: EdgeTypes = {
 const getLayoutedElements = (nodes: Node<NodeData>[], edges: Edge[], direction = 'TB') => {
   const dagreGraph = new dagre.graphlib.Graph().setDefaultEdgeLabel(() => ({}));
   const isHorizontal = direction === 'LR';
-  dagreGraph.setGraph({ rankdir: direction });
+  dagreGraph.setGraph({ 
+    rankdir: direction,
+    nodesep: 100,
+    ranksep: 120,
+    // 移除 align: 'DL'，使用默认的中心对齐方式
+  });
 
   nodes.forEach((node) => {
-    dagreGraph.setNode(node.id, { width: 200, height: 100 });
+    // 终端设备可以稍微窄一点，但为了统一布局暂定 200x100
+    dagreGraph.setNode(node.id, { width: 220, height: 120 });
   });
 
   edges.forEach((edge) => {
@@ -63,8 +69,8 @@ const getLayoutedElements = (nodes: Node<NodeData>[], edges: Edge[], direction =
       targetPosition: isHorizontal ? Position.Left : Position.Top,
       sourcePosition: isHorizontal ? Position.Right : Position.Bottom,
       position: {
-        x: nodeWithPosition.x - 100,
-        y: nodeWithPosition.y - 50,
+        x: nodeWithPosition.x - 110,
+        y: nodeWithPosition.y - 60,
       },
     };
   });
@@ -382,8 +388,19 @@ const TopologyEditorContent = () => {
 
       setNodes([...finalNodes]);
       setEdges([...layoutedEdges]);
+
+      // 布局后自动居中，增加延迟并确保视图包含所有节点
+      setTimeout(() => {
+        if (reactFlowInstance) {
+          reactFlowInstance.fitView({ 
+            duration: 800,
+            padding: 0.2,
+            includeHiddenNodes: false
+          });
+        }
+      }, 150);
     },
-    [nodes, edges, setNodes, setEdges]
+    [nodes, edges, setNodes, setEdges, reactFlowInstance]
   );
 
   const loadFromLocalStorage = useCallback(() => {
@@ -392,12 +409,22 @@ const TopologyEditorContent = () => {
       const flow = JSON.parse(flowData);
       setNodes(flow.nodes || []);
       setEdges(flow.edges || []);
+      
+      // 加载后自动居中
+      setTimeout(() => {
+        if (reactFlowInstance) {
+          reactFlowInstance.fitView({ 
+            duration: 800, 
+            padding: 0.2 
+          });
+        }
+      }, 200);
     }
     const savedImage = localStorage.getItem(FLOOR_PLAN_IMAGE_KEY);
     if (savedImage) {
       setFloorPlanImage(savedImage);
     }
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, reactFlowInstance]);
 
   const handleFloorPlanUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -491,6 +518,16 @@ const TopologyEditorContent = () => {
           const flow = JSON.parse(e.target.result as string);
           setNodes(flow.nodes || []);
           setEdges(flow.edges || []);
+          
+          // 导入后自动居中
+          setTimeout(() => {
+            if (reactFlowInstance) {
+              reactFlowInstance.fitView({ 
+                duration: 800, 
+                padding: 0.2 
+              });
+            }
+          }, 200);
         }
       };
     }
@@ -618,6 +655,16 @@ const TopologyEditorContent = () => {
             <Upload size={16} /> 导入
             <input type="file" className="hidden" accept=".json" onChange={importJson} />
           </label>
+          <a 
+            href="https://github.com/HarLin97/home-network-planner" 
+            target="_blank" 
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-gray-900 text-white rounded-md hover:bg-black transition-colors"
+            title="GitHub 仓库"
+          >
+            <Github size={16} />
+            <span>GitHub</span>
+          </a>
         </div>
       </header>
 
